@@ -1,13 +1,14 @@
-# upgrade_model.ps1
-# Usage:
-#   .\upgrade_model.ps1                        # auto-generates a message
-#   .\upgrade_model.ps1 "add_service_notes"    # uses the provided message
-#
-# Must be run from backend/ with the venv active.
-
+# upgrade_model.ps1 (Versión Robusta para Aliases)
 param(
     [string]$Message = ""
 )
+
+# 1. Saltamos a la carpeta backend sin importar el origen
+Set-Location "S:\dev\microtaller\backend"
+
+# 2. Activamos el entorno virtual automáticamente
+# Esto asegura que Alembic tenga acceso a tus modelos de Python (currency, vehicle, etc.)
+& "S:\dev\microtaller\backend\.venv\Scripts\Activate.ps1"
 
 # ── Resolve migration message ─────────────────────────────────────────────────
 if ([string]::IsNullOrWhiteSpace($Message)) {
@@ -17,13 +18,15 @@ if ([string]::IsNullOrWhiteSpace($Message)) {
 
 Write-Host ""
 Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor DarkCyan
-Write-Host "  MicroTaller — Alembic Model Upgrade" -ForegroundColor Cyan
+Write-Host "   MicroTaller — Alembic Model Upgrade" -ForegroundColor Cyan
 Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor DarkCyan
-Write-Host "  Message : $Message" -ForegroundColor White
+Write-Host "   Message : $Message" -ForegroundColor White
 Write-Host ""
 
 # ── Step 1: autogenerate revision ─────────────────────────────────────────────
 Write-Host "[1/2] Generating migration script..." -ForegroundColor Yellow
+
+# Ejecutamos alembic directamente (el venv ya está activo por el paso 2)
 alembic revision --autogenerate -m "$Message"
 
 if ($LASTEXITCODE -ne 0) {
@@ -46,6 +49,6 @@ if ($LASTEXITCODE -ne 0) {
 # ── Done ──────────────────────────────────────────────────────────────────────
 Write-Host ""
 Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor DarkGreen
-Write-Host "  [OK] Modelo y base de datos sincronizados." -ForegroundColor Green
+Write-Host "   [OK] Modelo y base de datos sincronizados." -ForegroundColor Green
 Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor DarkGreen
 Write-Host ""

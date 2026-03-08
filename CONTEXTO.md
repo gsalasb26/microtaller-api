@@ -40,12 +40,17 @@
 
 ```
 microtaller/
+├── README.md                     # Contrato público: Quick Start, Toolbelt, Stack
+├── CONTEXTO.md                   # Este archivo: cerebro técnico del proyecto
+├── .gitignore
 ├── start.ps1                     # Inicio rápido: Docker + venv
+├── sync_git.ps1                  # Sync automático con GitHub
 ├── backend/
 │   ├── Dockerfile
 │   ├── requirements.txt
 │   ├── alembic.ini               # Configuración de Alembic
 │   ├── upgrade_model.ps1         # Script de migración automatizada
+│   ├── alembic.ini               # Configuración de Alembic
 │   ├── alembic/
 │   │   ├── env.py                # Config async + carga de modelos
 │   │   ├── script.py.mako        # Plantilla de scripts de migración
@@ -53,8 +58,9 @@ microtaller/
 │   │   └── versions/             # Archivos de migración generados
 │   ├── app/
 │   │   ├── main.py               # Punto de entrada FastAPI, lifespan, CORS, routers
-│   │   ├── config.py             # Settings (pydantic-settings, .env)
+│   │   ├── config.py             # Settings (pydantic-settings, .env) · SEED_ON_STARTUP
 │   │   ├── database.py           # Motor async, sesión, Base declarativa
+│   │   ├── seed_data.py          # Datos iniciales idempotentes (CRC, USD, tipos, clientes)
 │   │   ├── models/               # Modelos SQLAlchemy (ORM)
 │   │   │   ├── currency.py
 │   │   │   ├── customer.py
@@ -508,3 +514,74 @@ allow_headers=["*"]
 2. **Integración WhatsApp (Futuro):** El sistema debe estar preparado para disparar eventos (webhooks) cuando una `WorkOrder` cambie de estado (ej. de `received` a `in_progress`).
 3. **Validación Estricta:** No se aceptarán cambios en los modelos de base de datos que no incluyan un script de migración o actualización manual documentado.
 4. **Idempotencia:** Todos los scripts de SQL en `/sql` deben ser ejecutables múltiples veces sin romper la base de datos.
+
+---
+
+## 16. Manual de Operaciones para IA
+
+> Este bloque es una instrucción directa para el asistente de IA (Claude / GitHub Copilot).
+> Su propósito es evitar acciones destructivas o redundantes sobre recursos que ya existen.
+
+### 16.1 Estado actual de la base de datos
+
+La base de datos **ya está poblada** con datos iniciales ejecutados mediante `backend/app/seed_data.py`.  
+**No volver a insertar, recrear ni sugerir insertar manualmente** los siguientes registros:
+
+| Tabla | Registros ya existentes |
+|---|---|
+| `currencies` | `CRC` (Colón Costarricense, ₡) · `USD` (Dólar Estadounidense, $) |
+| `vehicle_types` | `Sedán` · `SUV` · `4x4` · `Motocicleta` |
+| `customers` | Juan Pérez Solís (8888-1111) · María Rodríguez Vega (8888-2222) |
+| `vehicles` | Toyota Corolla placa `ABC-123` · Honda CB300 placa `MTO-456` |
+
+Si el usuario solicita datos de prueba adicionales, **agregar registros nuevos** a `seed_data.py` siguiendo el patrón idempotente existente, no reemplazar los datos actuales.
+
+### 16.2 Procedimiento para cambios en la base de datos
+
+Cuando el usuario pida **agregar un modelo, una columna o una relación**, el flujo correcto es:
+
+```
+1. Editar el archivo en backend/app/models/<entidad>.py
+2. Actualizar schemas en backend/app/schemas/<entidad>.py
+3. Crear o actualizar el router en backend/app/routers/<entidad>.py
+4. Registrar el router en backend/app/routers/__init__.py y main.py
+5. Ejecutar desde backend/:
+       .\upgrade_model.ps1 -Message "descripcion del cambio"
+```
+
+**Nunca** sugerir `alembic revision` o `alembic upgrade` como comandos manuales sueltos; siempre usar `upgrade_model.ps1`.
+
+### 16.3 Procedimiento para sincronizar con GitHub
+
+Cuando el usuario pida hacer commit, push o "guardar los cambios":
+
+```powershell
+# Desde la raíz del proyecto:
+.\sync_git.ps1 -Message "descripcion concisa del cambio"
+```
+
+`sync_git.ps1` ejecuta automáticamente: limpieza de índice → `git add .` → commit → `git push origin main`.  
+No sugerir los comandos Git por separado a menos que el usuario lo pida explícitamente.
+
+### 16.4 Scripts disponibles y su propósito
+
+| Script | Ubicación | Cuándo ejecutarlo |
+|---|---|---|
+| `start.ps1` | raíz | Al iniciar una sesión de trabajo |
+| `upgrade_model.ps1` | `backend/` | Tras cualquier cambio en modelos ORM |
+| `sync_git.ps1` | raíz | Para hacer commit + push a GitHub |
+| `seed_data.py` | `backend/app/` | Solo para agregar nuevos datos de prueba (idempotente) |
+
+### 16.5 Variables de entorno clave
+
+| Variable | Valor por defecto | Efecto |
+|---|---|---|
+| `DEBUG` | `false` | `true` expone el endpoint `POST /seed` en Swagger |
+| `SEED_ON_STARTUP` | `false` | `true` ejecuta `seed_data.py` al arrancar la API |
+
+### 16.6 Reglas de migración (lecciones aprendidas)
+
+1. **ENUMs nuevos**: crear con `op.execute(sa.text("CREATE TYPE ... AS ENUM ..."))` **antes** de usarlos en columnas.
+2. **Cambio de tipo en columna con DEFAULT**: tres pasos en raw SQL: `DROP DEFAULT` → `ALTER TYPE USING` → `SET DEFAULT`.
+3. **Nombres de FK**: siempre explícitos (`fk_tabla_columna`), nunca autogenerados anónimos.
+4. **Columnas nuevas en tablas existentes**: siempre `nullable=True` en la primera migración.
