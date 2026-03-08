@@ -1,0 +1,23 @@
+Alembic — Migraciones de base de datos para MicroTaller
+=========================================================
+
+Todos los comandos se ejecutan desde el directorio backend/.
+
+  Generar migración automática (detecta cambios en modelos):
+    alembic revision --autogenerate -m "descripcion breve"
+
+  Aplicar todas las migraciones pendientes:
+    alembic upgrade head
+
+  Revertir la última migración:
+    alembic downgrade -1
+
+  Ver historial de migraciones:
+    alembic history --verbose
+
+  Ver revisión actual aplicada en la BD:
+    alembic current
+
+IMPORTANTE: Revisar siempre el script generado en alembic/versions/
+antes de aplicar. Alembic no detecta todos los cambios automáticamente
+(e.g. CHECK constraints definidos inline, cambios de tipo en algunas DBs).

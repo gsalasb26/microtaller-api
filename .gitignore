@@ -1,0 +1,56 @@
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ── Virtual environments ───────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+
+# ── Environment / secrets ──────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Alembic compiled ──────────────────────────────────────────────────────────
+# (keep versions/*.py tracked; ignore only byte-compiled cache)
+backend/alembic/__pycache__/
+backend/alembic/versions/__pycache__/
+
+# ── Docker volumes / local data ────────────────────────────────────────────────
+docker/volumes/
+docker/data/
+postgres_data/
+pgdata/
+
+# ── Editors ───────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Test / coverage ───────────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log
+logs/
