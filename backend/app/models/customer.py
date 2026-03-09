@@ -14,6 +14,9 @@ class Customer(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
+    identification: Mapped[str | None] = mapped_column(
+        String(30), nullable=True, unique=True, index=True
+    )
     name: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
     phone: Mapped[str] = mapped_column(String(20), nullable=False)
     email: Mapped[str | None] = mapped_column(String(150), nullable=True)
@@ -24,5 +27,8 @@ class Customer(Base):
 
     # Relationships
     vehicles: Mapped[list["Vehicle"]] = relationship(  # noqa: F821
+        back_populates="customer", lazy="selectin"
+    )
+    receptions: Mapped[list["Reception"]] = relationship(  # noqa: F821
         back_populates="customer", lazy="selectin"
     )

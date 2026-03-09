@@ -1,7 +1,7 @@
 # CONTEXTO.md — Documentación Técnica: MicroTaller API
 
-> Versión del documento: 2.0 · Fecha: 2026-03-08  
-> Actualizado para reflejar la incorporación de VehicleType, Currency, Alembic y scripts de automatización.
+> Versión del documento: 3.0 · Fecha: 2026-03-08  
+> Actualizado para reflejar el **Motor de Órdenes de Trabajo (OT)**: módulo Reception, flujo SAP-style con atomicidad de estados, descuentos por línea y validación E2E via TestClient.
 
 ---
 
@@ -64,21 +64,32 @@ microtaller/
 │   │   ├── models/               # Modelos SQLAlchemy (ORM)
 │   │   │   ├── currency.py
 │   │   │   ├── customer.py
+│   │   │   ├── reception.py       # Boleta de ingreso de vehículo
+│   │   │   ├── reception_detail.py # Líneas de trabajo solicitadas
 │   │   │   ├── vehicle.py
 │   │   │   ├── vehicle_type.py
-│   │   │   └── work_order.py
+│   │   │   ├── work_order.py      # OT financiera (WorkOrder + WorkOrderLine)
+│   │   │   └── work_type.py       # Catálogo de tipos de trabajo
 │   │   ├── schemas/              # Schemas Pydantic (request / response)
 │   │   │   ├── currency.py
 │   │   │   ├── customer.py
+│   │   │   ├── reception.py
+│   │   │   ├── reception_detail.py
 │   │   │   ├── vehicle.py
 │   │   │   ├── vehicle_type.py
-│   │   │   └── work_order.py
-│   │   └── routers/              # Endpoints FastAPI
-│   │       ├── currencies.py
-│   │       ├── customers.py
-│   │       ├── vehicle_types.py
-│   │       ├── vehicles.py
-│   │       └── work_orders.py
+│   │   │   ├── work_order.py
+│   │   │   └── work_type.py
+│   │   ├── routers/              # Endpoints FastAPI
+│   │   │   ├── currencies.py
+│   │   │   ├── customers.py
+│   │   │   ├── reception_details.py
+│   │   │   ├── receptions.py
+│   │   │   ├── vehicle_types.py
+│   │   │   ├── vehicles.py
+│   │   │   ├── work_orders.py
+│   │   │   └── work_types.py
+│   │   └── seeds/                # Scripts de validación y carga de datos
+│   │       └── test_sap_flow.py  # Validación E2E del flujo SAP completo
 │   └── sql/
 │       └── add_foreign_keys.sql  # Script idempotente para FK en BD
 └── docker/
@@ -181,25 +192,55 @@ vehicles
   ├── plate            VARCHAR(20)   UNIQUE NOT NULL  INDEX
   └── created_at       TIMESTAMPTZ   DEFAULT now()
 
-work_orders
-  ├── id             UUID  PK
-  ├── vehicle_id     UUID  FK → vehicles.id  ON DELETE RESTRICT  INDEX
-  ├── status         ENUM(order_status)  NOT NULL  DEFAULT 'received'  INDEX
-  ├── checkin_photos JSON            NULLABLE
-  ├── notes          TEXT            NULLABLE
-  ├── created_at     TIMESTAMPTZ     DEFAULT now()
-  └── closed_at      TIMESTAMPTZ     NULLABLE
-  [índice compuesto: (vehicle_id, created_at)]
-  [índice compuesto: (status, created_at)]
+work_types
+  ├── id          UUID  PK
+  ├── name        VARCHAR(100)  NOT NULL  UNIQUE  INDEX
+  └── description TEXT          NULLABLE
 
-work_order_items
+receptions                         ← «Boleta de Ingreso»
+  ├── id               UUID  PK
+  ├── customer_id      UUID  FK → customers.id   ON DELETE RESTRICT  INDEX
+  ├── vehicle_id       UUID  FK → vehicles.id    ON DELETE RESTRICT  INDEX
+  ├── work_type_id     UUID  FK → work_types.id  ON DELETE SET NULL   INDEX  NULLABLE
+  ├── current_status   ENUM(reception_status)  NOT NULL  DEFAULT 'NEW'  INDEX
+  ├── reported_problem TEXT        NULLABLE
+  ├── received_by      VARCHAR(100) NOT NULL
+  ├── mileage          INTEGER      NULLABLE
+  ├── fuel_level       ENUM(fuel_level) NULLABLE
+  ├── vin_number       VARCHAR(50)  NULLABLE
+  └── created_at       TIMESTAMPTZ  DEFAULT now()
+
+reception_details                  ← «Líneas de trabajo solicitado»
   ├── id             UUID  PK
-  ├── work_order_id  UUID  FK → work_orders.id  ON DELETE CASCADE   INDEX
-  ├── currency_id    UUID  FK → currencies.id   ON DELETE SET NULL  INDEX  NULLABLE
-  ├── description    VARCHAR(255)     NOT NULL
-  ├── quantity       NUMERIC(10,3)    NOT NULL  CHECK > 0
-  ├── unit_price     NUMERIC(10,2)    NOT NULL  CHECK >= 0
-  └── total          NUMERIC(10,2)    NOT NULL  CHECK >= 0
+  ├── reception_id   UUID  FK → receptions.id  ON DELETE CASCADE   INDEX
+  ├── work_type_id   UUID  FK → work_types.id  ON DELETE SET NULL   INDEX  NULLABLE
+  ├── description    VARCHAR(255)  NOT NULL
+  └── work_date      TIMESTAMPTZ   NULLABLE
+
+work_orders                        ← «Orden de Trabajo Financiera»
+  ├── id             UUID  PK
+  ├── reception_id   UUID  FK → receptions.id  ON DELETE RESTRICT  INDEX  UNIQUE
+  ├── currency_id    UUID  FK → currencies.id  ON DELETE RESTRICT  INDEX
+  ├── order_number   VARCHAR(20)   NOT NULL  UNIQUE  INDEX  (ej: OT-1001)
+  ├── status         ENUM(work_order_status)  NOT NULL  DEFAULT 'DRAFT'  INDEX
+  ├── notes          TEXT          NULLABLE
+  ├── total_labor    NUMERIC(12,2) NOT NULL  DEFAULT 0
+  ├── total_parts    NUMERIC(12,2) NOT NULL  DEFAULT 0
+  ├── tax_amount     NUMERIC(12,2) NOT NULL  DEFAULT 0
+  ├── total_final    NUMERIC(12,2) NOT NULL  DEFAULT 0
+  ├── created_at     TIMESTAMPTZ   DEFAULT now()
+  └── updated_at     TIMESTAMPTZ   NULLABLE
+
+work_order_lines                   ← «Líneas de la OT (mano de obra y repuestos)»
+  ├── id                    UUID  PK
+  ├── work_order_id         UUID  FK → work_orders.id      ON DELETE CASCADE   INDEX
+  ├── reception_detail_id   UUID  FK → reception_details.id ON DELETE SET NULL  INDEX  NULLABLE
+  ├── description           VARCHAR(255)  NOT NULL
+  ├── quantity              NUMERIC(10,3) NOT NULL  CHECK > 0
+  ├── unit_price            NUMERIC(10,2) NOT NULL  CHECK >= 0
+  ├── discount_percentage   NUMERIC(5,2)  NOT NULL  DEFAULT 0.00  (0–100)
+  ├── subtotal              NUMERIC(12,2) NOT NULL  CHECK >= 0
+  └── is_part               BOOLEAN       NOT NULL  DEFAULT false
 ```
 
 ### 6.2 Relaciones
@@ -207,10 +248,16 @@ work_order_items
 | Relación | Cardinalidad | Eliminación |
 |---|---|---|
 | Customer → Vehicle | 1 : N | RESTRICT (no se puede eliminar un cliente con vehículos) |
-| VehicleType → Vehicle | 1 : N | SET NULL (el vehículo queda sin tipo si se borra el tipo) |
-| Vehicle → WorkOrder | 1 : N | RESTRICT (no se puede eliminar un vehículo con órdenes) |
-| WorkOrder → WorkOrderItem | 1 : N | CASCADE (al borrar una orden se borran sus ítems) |
-| Currency → WorkOrderItem | 1 : N | SET NULL (el ítem queda sin moneda si se borra la moneda) |
+| Customer → Reception | 1 : N | RESTRICT |
+| VehicleType → Vehicle | 1 : N | SET NULL |
+| Vehicle → Reception | 1 : N | RESTRICT |
+| WorkType → Reception | 1 : N | SET NULL |
+| WorkType → ReceptionDetail | 1 : N | SET NULL |
+| Reception → ReceptionDetail | 1 : N | CASCADE (los detalles pertenecen a la boleta) |
+| Reception → WorkOrder | **1 : 1** | RESTRICT (la OT referencia una sola boleta) |
+| WorkOrder → WorkOrderLine | 1 : N | CASCADE (al borrar la OT se borran sus líneas) |
+| WorkOrderLine → ReceptionDetail | N : 1 | SET NULL (línea puede existir sin detalle de boleta) |
+| Currency → WorkOrder | 1 : N | RESTRICT (no se puede borrar una moneda en uso) |
 
 ### 6.3 Connection Pool
 
@@ -228,50 +275,89 @@ Configurado en `app/database.py`:
 
 ## 7. Dominio y Lógica de Negocio
 
-### 7.1 Máquina de Estados — `OrderStatus`
+### 7.1 Máquina de Estados — `ReceptionStatus` (Boleta de Ingreso)
 
-Las órdenes de trabajo siguen un ciclo de vida estricto:
+La boleta de ingreso del vehículo sigue su propio ciclo de vida:
 
 ```
-  ┌──────────────┐
-  │   received   │────────────────────────┐
-  └──────┬───────┘                        │
-         │                                ▼
-         │               ┌────────────────────────────┐
-         │               │         delivered          │  ← TERMINAL
-         │               └────────────────────────────┘
-         │                                ▲
-         ▼                                │
-  ┌──────────────┐                        │
-  │ in_progress  │────────────────────────┘
-  └──────────────┘
+  ┌─────────┐    manual PATCH     ┌─────────────┐    POST /process    ┌──────────┐
+  │   NEW   │ ─────────────────►  │ IN_PROGRESS │ ──────────────────► │ FINISHED │
+  └─────────┘                     └──────┬──────┘                     └──────────┘
+                                         ▲                                  │
+                                         │         PATCH /cancel            │
+                                         └──────────────────────────────────┘
 ```
 
-| Transición | Permitida |
+| Transición | Disparador | Observación |
+|---|---|---|
+| `NEW` → `IN_PROGRESS` | `PATCH /receptions/{id}/status?new_status=IN_PROGRESS` | Manual por el taller |
+| `IN_PROGRESS` → `FINISHED` | `POST /work-orders/process` | **Automático y atómico** al generar la OT |
+| `FINISHED` → `IN_PROGRESS` | `PATCH /work-orders/{id}/cancel` | **Reversión automática** al cancelar la OT |
+
+### 7.2 Máquina de Estados — `WorkOrderStatus` (Orden de Trabajo)
+
+```
+  ┌───────┐    POST /process    ┌──────┐    PATCH /status    ┌──────────┐    PATCH /status    ┌──────────┐
+  │ DRAFT │ ──────────────────► │ SENT │ ─────────────────►  │ APPROVED │ ─────────────────►  │ INVOICED │
+  └───────┘                     └──────┘                     └──────────┘                     └──────────┘
+       └──────────────────────────────────────────────────────────────────────────────────────────┐
+                                        PATCH /cancel                                             ▼
+                                                                                           ┌───────────┐
+                                                                                           │ CANCELLED │ ← TERMINAL
+                                                                                           └───────────┘
+```
+
+Transiciones válidas definidas en `WORK_ORDER_TRANSITIONS`:
+
+| Desde | Hacia | Endpoint |
+|---|---|---|
+| `DRAFT` | `SENT` | `PATCH /work-orders/{id}/status?requested=SENT` |
+| `SENT` | `APPROVED` | `PATCH /work-orders/{id}/status?requested=APPROVED` |
+| `APPROVED` | `INVOICED` | `PATCH /work-orders/{id}/status?requested=INVOICED` |
+| Cualquiera (excepto `INVOICED`) | `CANCELLED` | `PATCH /work-orders/{id}/cancel` |
+
+### 7.3 Flujo SAP-Style — Atomicidad y Reversibilidad
+
+El diseño garantiza consistencia entre la boleta y la OT en una sola transacción de base de datos:
+
+#### Generar OT (`POST /work-orders/process`)
+1. Valida que la `Reception` esté en estado `NEW` o `IN_PROGRESS` (HTTP 400 si no).
+2. Crea el `WorkOrder` con sus `WorkOrderLine` (mano de obra + repuestos extra).
+3. Calcula y persiste `total_labor`, `total_parts`, `tax_amount`, `total_final`.
+4. Marca la `Reception` como `FINISHED` en el mismo `db.flush()`.
+5. Hace `commit()` — ambas escrituras son atómicas.
+
+#### Cancelar OT (`PATCH /work-orders/{id}/cancel`)
+1. Valida que el `WorkOrder` no esté en estado `INVOICED`.
+2. Cambia el estado del `WorkOrder` a `CANCELLED`.
+3. Revierte la `Reception` a `IN_PROGRESS` en el mismo `db.flush()`.
+4. Hace `commit()` — ambas escrituras son atómicas.
+
+### 7.4 Motor de Cálculo Financiero
+
+Cada `WorkOrderLine` incorpora descuento por línea. El subtotal se calcula como:
+
+$$subtotal = quantity \times unit\_price \times \left(1 - \frac{discount\_percentage}{100}\right)$$
+
+Redondeado a `Decimal("0.01")` con política `ROUND_HALF_UP`.
+
+Los totales de la OT se calculan discriminando tipo de línea (`is_part`):
+
+| Campo | Fórmula |
 |---|---|
-| `received` → `in_progress` | ✅ |
-| `received` → `delivered` | ✅ (trabajo simple sin etapa intermedia) |
-| `in_progress` → `delivered` | ✅ |
-| cualquier cosa → `received` | ❌ |
-| `delivered` → cualquiera | ❌ (terminal) |
+| `total_labor` | $\sum subtotal$ donde `is_part = false` |
+| `total_parts` | $\sum subtotal$ donde `is_part = true` |
+| `tax_amount` | $(total\_labor + total\_parts) \times tax\_rate$ (default `0.13`) |
+| `total_final` | $total\_labor + total\_parts + tax\_amount$ |
 
-Las transiciones se validan en `_assert_transition()` devolviendo **HTTP 422** si no son válidas.
+> ⚠️ **Nota de implementación:** el `tax_amount` se calcula y almacena en el momento de la creación de la OT. Un IVA variable por moneda o exenciones por tipo de servicio está identificado como próximo paso (ver §13).
 
-### 7.2 Cierre de Orden (`POST /work-orders/{id}/close`)
+### 7.5 Composición de Líneas de una OT
 
-Reglas de negocio aplicadas antes de marcar como `delivered`:
-1. La orden debe existir.
-2. Debe tener **al menos un ítem**; sin ítems devuelve HTTP 422.
-3. La transición de estado debe ser válida según la máquina de estados.
-4. Al cerrar se registra `closed_at = datetime.now(UTC)`.
-
-### 7.3 Cálculo del Total
-
-El total de cada ítem se calcula en backend como:
-
-$$total = quantity \times unit\_price$$
-
-Redondeado a 2 decimales con política `ROUND_HALF_UP`. El total de la orden entera es un `@computed_field` de Pydantic, nunca almacenado en DB.
+| Tipo de línea | Origen | `is_part` | `reception_detail_id` |
+|---|---|---|---|
+| Mano de obra (labor) | `LaborItemCreate` — descripción tomada de `ReceptionDetail` | `false` | Requerido |
+| Repuesto / extra | `WorkOrderLineCreate` — descripción libre | `true` | `null` |
 
 ---
 
@@ -301,28 +387,65 @@ Todos bajo el prefijo `/api/v1`.
 | `PATCH` | `/vehicles/{id}` | Actualización parcial (valida placa única) |
 | `DELETE` | `/vehicles/{id}` | Eliminar → 204 |
 
-### 8.3 Work Orders
+### 8.3 Receptions (Boletas de Ingreso)
 
 | Método | Ruta | Descripción |
 |---|---|---|
-| `GET` | `/work-orders` | Listar órdenes (paginado; filtros `vehicle_id`, `status`) |
-| `GET` | `/work-orders/open` | Listar órdenes no entregadas |
-| `GET` | `/work-orders/by-plate/{plate}` | Órdenes de un vehículo por placa |
-| `GET` | `/work-orders/{id}` | Obtener orden por ID |
-| `POST` | `/work-orders` | Crear orden (con ítems opcionales) → 201 |
-| `PATCH` | `/work-orders/{id}` | Actualizar estado / notas / fotos |
-| `DELETE` | `/work-orders/{id}` | Eliminar → 204 |
-| `POST` | `/work-orders/{id}/close` | Cerrar orden → `delivered` |
+| `GET` | `/receptions` | Listar boletas (paginado; filtros `vehicle_id`, `status`) |
+| `GET` | `/receptions/{id}` | Obtener boleta por ID |
+| `POST` | `/receptions` | Crear boleta → 201 (estado inicial `NEW`) |
+| `PATCH` | `/receptions/{id}` | Actualizar campos opcionales |
+| `PATCH` | `/receptions/{id}/status?new_status=` | Avanzar estado manualmente |
+| `DELETE` | `/receptions/{id}` | Eliminar → 204 |
 
-### 8.4 Work Order Items
+### 8.4 Reception Details (Líneas de Trabajo Solicitado)
 
 | Método | Ruta | Descripción |
 |---|---|---|
-| `POST` | `/work-orders/{id}/items` | Agregar ítem → 201 |
-| `PATCH` | `/work-orders/{id}/items/{item_id}` | Actualizar ítem (recalcula total) |
-| `DELETE` | `/work-orders/{id}/items/{item_id}` | Eliminar ítem → 204 |
+| `GET` | `/reception-details?reception_id=` | Listar detalles de una boleta |
+| `GET` | `/reception-details/{id}` | Obtener detalle por ID |
+| `POST` | `/reception-details` | Crear línea de trabajo → 201 |
+| `PATCH` | `/reception-details/{id}` | Actualización parcial |
+| `DELETE` | `/reception-details/{id}` | Eliminar → 204 |
 
-### 8.5 Vehicle Types
+### 8.5 Work Orders (Órdenes de Trabajo Financieras)
+
+| Método | Ruta | Descripción |
+|---|---|---|
+| `GET` | `/work-orders` | Listar OTs (paginado; filtros `status`) |
+| `GET` | `/work-orders/{id}` | Obtener OT por ID |
+| `POST` | `/work-orders/process` | **Generar OT** desde boleta → 201; marca boleta `FINISHED` |
+| `PATCH` | `/work-orders/{id}/status?requested=` | Avanzar estado (SENT / APPROVED / INVOICED) |
+| `PATCH` | `/work-orders/{id}/cancel` | **Cancelar OT**; revierte boleta a `IN_PROGRESS` |
+
+#### Payload `POST /work-orders/process`
+
+```json
+{
+  "reception_id": "<uuid>",
+  "currency_id":  "<uuid>",
+  "tax_rate":     0.13,
+  "notes":        "Texto libre",
+  "labor_items": [
+    { "reception_detail_id": "<uuid>", "quantity": 1.0, "unit_price": 35.00, "discount_percentage": 10.0 }
+  ],
+  "extra_lines": [
+    { "description": "Aceite Mobil 1L x5", "quantity": 5.0, "unit_price": 8.50, "is_part": true, "discount_percentage": 0.0 }
+  ]
+}
+```
+
+### 8.6 Work Types (Catálogo)
+
+| Método | Ruta | Descripción |
+|---|---|---|
+| `GET` | `/work-types` | Listar tipos de trabajo |
+| `GET` | `/work-types/{id}` | Obtener por ID |
+| `POST` | `/work-types` | Crear → 201 (409 si nombre duplicado) |
+| `PATCH` | `/work-types/{id}` | Actualización parcial |
+| `DELETE` | `/work-types/{id}` | Eliminar → 204 |
+
+### 8.7 Vehicle Types
 
 | Método | Ruta | Descripción |
 |---|---|---|
@@ -332,7 +455,7 @@ Todos bajo el prefijo `/api/v1`.
 | `PATCH` | `/vehicle-types/{id}` | Actualización parcial |
 | `DELETE` | `/vehicle-types/{id}` | Eliminar → 204 |
 
-### 8.6 Currencies
+### 8.8 Currencies
 
 | Método | Ruta | Descripción |
 |---|---|---|
@@ -342,7 +465,7 @@ Todos bajo el prefijo `/api/v1`.
 | `PATCH` | `/currencies/{id}` | Actualización parcial |
 | `DELETE` | `/currencies/{id}` | Eliminar → 204 |
 
-### 8.7 Salud
+### 8.9 Salud
 
 | Método | Ruta | Descripción |
 |---|---|---|
@@ -472,24 +595,46 @@ allow_headers=["*"]
 | `autoflush=False` | Control explícito del flush; evita side-effects inesperados |
 | Total calculado (no almacenado) | Evita inconsistencias entre `quantity * unit_price` y `total` |
 | `ondelete="RESTRICT"` en Customer→Vehicle y Vehicle→WorkOrder | Integridad referencial; impide borrado accidental en cascada |
-| `ondelete="CASCADE"` en WorkOrder→Item | Los ítems son parte de la orden; no tienen sentido sin ella |
+| `ondelete="CASCADE"` en WorkOrder→Line | Las líneas son parte de la OT; no tienen sentido sin ella |
 | `ROUND_HALF_UP` | Comportamiento de redondeo contable estándar |
-| Índices compuestos en `work_orders` | Optimizan las consultas más frecuentes: por vehículo+fecha y por estado+fecha |
+| Índices compuestos en `work_orders` | Optimizan las consultas más frecuentes: por recepción y por estado |
+| Relación 1:1 Reception → WorkOrder | Una boleta solo puede tener una OT activa; garantiza integridad del flujo de caja |
+| `discount_percentage` en `WorkOrderLine` | Descuento negociado por ítem; no afecta al precio catálogo registrado en `ReceptionDetail` |
+| Totales almacenados en `WorkOrder` | A diferencia del subtotal de ítem, los totales de la OT se persisten para auditoría histórica (precio puede cambiar) |
+| `tax_rate` como parámetro de entrada | Permite adaptar el IVA por país o tipo de servicio sin cambiar código |
 
 ---
 
-## 13. Áreas de Mejora Identificadas
+## 13. Estado Actual del Backend y Próximos Pasos
 
-| Área | Estado | Observación |
+### 13.1 Estado Actual
+
+| Componente | Estado | Detalle |
 |---|---|---|
-| Capa de servicio | ⚠️ Pendiente | La lógica de negocio en los routers dificulta los tests unitarios; se recomienda extraer una capa `services/` |
-| Migraciones | ✅ Implementado | Alembic configurado con `env.py` async y script `upgrade_model.ps1` |
-| Tests | ⚠️ Pendiente | No existe directorio `tests/`; se recomienda pytest + httpx AsyncClient |
-| Autenticación | ⚠️ Pendiente | No hay mecanismo de autenticación/autorización (JWT, API Key, OAuth2) |
-| CORS en producción | ⚠️ Pendiente | La política wildcard debe restringirse antes de hacer deploy |
-| `--reload` en producción | ⚠️ Pendiente | Debe quitarse del CMD del Dockerfile para producción |
-| Logging estructurado | ⚠️ Pendiente | Solo hay `print()` en el lifespan; se recomienda `structlog` o `logging` estándar |
-| Health check de BD | ⚠️ Pendiente | El endpoint `/health` no verifica la conectividad a la DB en tiempo real |
+| Motor de Órdenes de Trabajo (OT) | ✅ Implementado | Módulo completo: Reception, ReceptionDetail, WorkOrder, WorkOrderLine |
+| Flujo SAP-style (atomicidad) | ✅ Implementado | `POST /process` y `PATCH /cancel` transicionan Reception y WorkOrder atómicamente |
+| Descuentos por línea | ✅ Implementado | `discount_percentage` en `WorkOrderLine`; fórmula `qty × price × (1 − disc/100)` |
+| Multi-moneda | ✅ Implementado | `WorkOrder.currency_id` FK a `currencies`; soporte CRC y USD en seed |
+| Cálculo de totales discriminado | ✅ Implementado | `total_labor`, `total_parts`, `tax_amount`, `total_final` persistidos en OT |
+| Validación E2E via TestClient | ✅ Implementado | `seeds/test_sap_flow.py` — httpx + ASGITransport; valida 4 pasos + 9 asserts |
+| Migraciones Alembic | ✅ Aplicadas | Head: `5d8ce4790a41` (add_discount_percentage_to_work_order_lines) |
+| Capa de servicio | ⚠️ Pendiente | Lógica de negocio en routers; extraer capa `services/` para testabilidad |
+| Tests unitarios formales | ⚠️ Pendiente | No existe `tests/`; `test_sap_flow.py` es integración, no pytest formal |
+| Autenticación | ⚠️ Pendiente | Sin JWT / API Key; bloqueante para producción |
+| CORS en producción | ⚠️ Pendiente | Política wildcard; restringir `allow_origins` antes de deploy |
+| Logging estructurado | ⚠️ Pendiente | Solo `print()` en lifespan; migrar a `structlog` o `logging` |
+| Health check de BD | ⚠️ Pendiente | `/health` no verifica conectividad real a la DB |
+
+### 13.2 Próximos Pasos (Backlog Priorizado)
+
+| Prioridad | Tarea | Descripción |
+|---|---|---|
+| 🔴 Alta | **IVA configurable** | Soporte de exenciones por tipo de servicio (mano de obra vs repuesto); tabla `tax_rates` o campo en `WorkType` |
+| 🔴 Alta | **Vistas de Frontend — Liquidación de OT** | Pantallas para generar, revisar y aprobar OTs; mostrar desglose labor/repuestos/IVA/total |
+| 🟡 Media | **PDF de OT** | Generar documento imprimible de la orden de trabajo (WeasyPrint o similar) |
+| 🟡 Media | **Historial de estados** | Tabla `work_order_status_log` con timestamp + usuario por cada transición |
+| 🟢 Baja | **Autenticación JWT** | Proteger todos los endpoints; roles: `admin`, `técnico`, `recepcionista` |
+| 🟢 Baja | **Capa `services/`** | Refactorizar lógica de negocio de routers a servicios para mejorar testabilidad |
 
 ---
 
@@ -497,18 +642,102 @@ allow_headers=["*"]
 
 | Término | Definición |
 |---|---|
-| **Work Order** | Orden de trabajo abierta para un vehículo; agrupa los trabajos realizados |
-| **Work Order Item** | Línea de detalle de una orden (mano de obra, repuesto, etc.) |
-| **received** | Estado inicial: vehículo ingresado, trabajo pendiente |
-| **in_progress** | Trabajo en ejecución |
-| **delivered** | Trabajo terminado y vehículo entregado al cliente (estado terminal) |
+| **Reception** | Boleta de ingreso de un vehículo al taller; registra estado, millaje, problema reportado |
+| **ReceptionDetail** | Línea de trabajo solicitado dentro de una boleta (descripción del servicio a realizar) |
+| **WorkOrder** | Orden de trabajo financiera; vinculada 1:1 a una Reception; contiene totales y moneda |
+| **WorkOrderLine** | Línea de detalle de una OT: mano de obra (heredada de ReceptionDetail) o repuesto extra |
+| **WorkType** | Catálogo de tipos de trabajo o servicio (Mantenimiento, Diagnóstico, Latonería…) |
+| **is_part** | Bandera booleana en `WorkOrderLine`; `true` = repuesto, `false` = mano de obra |
+| **discount_percentage** | Descuento por línea de OT (0–100 %); afecta el subtotal sin modificar el precio unitario |
+| **LaborItemCreate** | Schema de entrada para líneas de mano de obra al procesar una OT |
+| **NEW** | Estado inicial de una Reception: vehículo ingresado, aún no evaluado |
+| **IN_PROGRESS** | Trabajo en ejecución en la Reception |
+| **FINISHED** | Reception con OT generada (estado establecido automáticamente por `POST /process`) |
+| **DRAFT** | Estado inicial de una WorkOrder recién creada |
+| **CANCELLED** | WorkOrder cancelada; la Reception asociada vuelve a `IN_PROGRESS` |
+| **SAP-Style Flow** | Término interno para el patrón de atomicidad: generar/cancelar OT modifica Reception en la misma transacción |
+| **ASGITransport** | Transporte de httpx que inyecta la app ASGI directamente sin levantar sockets; usado en `test_sap_flow.py` |
 | **Lifespan** | Hook de FastAPI para inicialización y limpieza al arrancar/detener la app |
 | **AsyncSession** | Sesión de SQLAlchemy que opera de forma no bloqueante con `asyncio` |
-| **Currency** | Moneda ISO-4217 asociada opcionalmente a un ítem de orden de trabajo |
+| **Currency** | Moneda ISO-4217 associated a una WorkOrder (ej: CRC, USD) |
 | **VehicleType** | Catálogo de tipos de vehículo (Sedan, SUV, Pickup, Motocicleta…) |
 | **upgrade_model.ps1** | Script PowerShell que genera y aplica una migración Alembic en un solo comando |
 
-## 15. Reglas de Oro para el Desarrollo (Instrucciones de Co-Ingeniería)
+---
+
+## 15. Hito: Motor de Órdenes de Trabajo — Resumen Ejecutivo
+
+> **Fecha de implementación:** 2026-03-08 · **Versión de documento:** 3.0
+
+Este hito marca la transición del sistema de una herramienta de gestión de vehículos a un **motor financiero completo** para talleres mecánicos.
+
+### 15.1 Componentes Implementados
+
+| Componente | Descripción |
+|---|---|
+| **Relación 1:N Reception → ReceptionDetail** | Una boleta de ingreso puede registrar múltiples líneas de trabajo solicitado antes de generar la OT |
+| **Relación 1:1 Reception → WorkOrder** | Cada boleta genera exactamente una OT financiera; garantiza trazabilidad completa |
+| **Multi-moneda** | La OT se emite en la moneda negociada (`currency_id` FK a `currencies`); soporte inmediato para CRC y USD |
+| **WorkOrderLine con discriminación** | Líneas de mano de obra (heredan descripción de `ReceptionDetail`) y repuestos extra (ítem libre) bajo el mismo modelo |
+| **Descuento por línea** | Campo `discount_percentage NUMERIC(5,2)` con lógica de negocio en `_subtotal()` |
+| **Totales persistidos** | `total_labor`, `total_parts`, `tax_amount`, `total_final` almacenados para auditoría histórica |
+
+### 15.2 Lógica SAP-Style — Garantías de Consistencia
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│  POST /work-orders/process           (una transacción DB)            │
+│  ┌────────────────────┐    flush()   ┌─────────────────────────────┐ │
+│  │  WorkOrder DRAFT   │ ──────────►  │  Reception → FINISHED       │ │
+│  │  + N WorkOrderLines│              │  (misma sesión SQLAlchemy)  │ │
+│  └────────────────────┘   commit()  └─────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────┐
+│  PATCH /work-orders/{id}/cancel      (una transacción DB)            │
+│  ┌────────────────────┐    flush()   ┌─────────────────────────────┐ │
+│  │  WorkOrder →       │ ──────────►  │  Reception → IN_PROGRESS    │ │
+│  │  CANCELLED         │              │  (misma sesión SQLAlchemy)  │ │
+│  └────────────────────┘   commit()  └─────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+### 15.3 Validación E2E — `seeds/test_sap_flow.py`
+
+El script ejecuta el ciclo completo en orden usando **`httpx.AsyncClient` con `ASGITransport`** — sin levantar servidor ni manipular ORM directamente:
+
+```
+Setup   → GET-or-POST currency / work-type (idempotente por nombre/código)
+          POST customer + vehicle (fresh por run_id)
+Paso 1  → POST /api/v1/receptions              ASSERT: current_status == NEW
+Paso 2  → PATCH .../status?new_status=IN_PROGRESS  ASSERT: current_status == IN_PROGRESS
+Paso 3  → POST /api/v1/reception-details × 2
+          POST /api/v1/work-orders/process
+          GET  /api/v1/receptions/{id}           ASSERT: current_status == FINISHED
+Paso 4  → PATCH /api/v1/work-orders/{id}/cancel
+          GET  /api/v1/work-orders/{id}          ASSERT: status == CANCELLED
+          GET  /api/v1/receptions/{id}           ASSERT: current_status == IN_PROGRESS
+```
+
+**Totales validados en el último run:**
+
+| Concepto | Valor |
+|---|---|
+| Mano de obra (labor) | `51.50` |
+| Repuestos (parts) | `53.90` |
+| IVA 13 % | `13.70` |
+| **Total final** | **`119.10`** |
+
+### 15.4 Migraciones Aplicadas
+
+| Revisión Alembic | Descripción |
+|---|---|
+| `35310d98cb8b` | Rediseño de `work_orders` (FK a Reception, WorkOrderStatus ENUM, WorkOrderLine) |
+| `5d8ce4790a41` | `discount_percentage NUMERIC(5,2)` en `work_order_lines` |
+
+---
+
+## 16. Reglas de Oro para el Desarrollo (Instrucciones de Co-Ingeniería)
 
 1. **Prioridad de Refactorización:** Antes de agregar nuevas funcionalidades complejas, se debe extraer la lógica de los `routers` a una capa de `services/`.
 2. **Integración WhatsApp (Futuro):** El sistema debe estar preparado para disparar eventos (webhooks) cuando una `WorkOrder` cambie de estado (ej. de `received` a `in_progress`).
@@ -517,12 +746,12 @@ allow_headers=["*"]
 
 ---
 
-## 16. Manual de Operaciones para IA
+## 17. Manual de Operaciones para IA
 
 > Este bloque es una instrucción directa para el asistente de IA (Claude / GitHub Copilot).
 > Su propósito es evitar acciones destructivas o redundantes sobre recursos que ya existen.
 
-### 16.1 Estado actual de la base de datos
+### 17.1 Estado actual de la base de datos
 
 La base de datos **ya está poblada** con datos iniciales ejecutados mediante `backend/app/seed_data.py`.  
 **No volver a insertar, recrear ni sugerir insertar manualmente** los siguientes registros:
@@ -531,12 +760,13 @@ La base de datos **ya está poblada** con datos iniciales ejecutados mediante `b
 |---|---|
 | `currencies` | `CRC` (Colón Costarricense, ₡) · `USD` (Dólar Estadounidense, $) |
 | `vehicle_types` | `Sedán` · `SUV` · `4x4` · `Motocicleta` |
+| `work_types` | `TEST - Mantenimiento SAP` (creado por `test_sap_flow.py`, idempotente) |
 | `customers` | Juan Pérez Solís (8888-1111) · María Rodríguez Vega (8888-2222) |
 | `vehicles` | Toyota Corolla placa `ABC-123` · Honda CB300 placa `MTO-456` |
 
 Si el usuario solicita datos de prueba adicionales, **agregar registros nuevos** a `seed_data.py` siguiendo el patrón idempotente existente, no reemplazar los datos actuales.
 
-### 16.2 Procedimiento para cambios en la base de datos
+### 17.2 Procedimiento para cambios en la base de datos
 
 Cuando el usuario pida **agregar un modelo, una columna o una relación**, el flujo correcto es:
 
@@ -551,7 +781,7 @@ Cuando el usuario pida **agregar un modelo, una columna o una relación**, el fl
 
 **Nunca** sugerir `alembic revision` o `alembic upgrade` como comandos manuales sueltos; siempre usar `upgrade_model.ps1`.
 
-### 16.3 Procedimiento para sincronizar con GitHub
+### 17.3 Procedimiento para sincronizar con GitHub
 
 Cuando el usuario pida hacer commit, push o "guardar los cambios":
 
@@ -563,7 +793,7 @@ Cuando el usuario pida hacer commit, push o "guardar los cambios":
 `sync_git.ps1` ejecuta automáticamente: limpieza de índice → `git add .` → commit → `git push origin main`.  
 No sugerir los comandos Git por separado a menos que el usuario lo pida explícitamente.
 
-### 16.4 Scripts disponibles y su propósito
+### 17.4 Scripts disponibles y su propósito
 
 | Script | Ubicación | Cuándo ejecutarlo |
 |---|---|---|
@@ -572,14 +802,14 @@ No sugerir los comandos Git por separado a menos que el usuario lo pida explíci
 | `sync_git.ps1` | raíz | Para hacer commit + push a GitHub |
 | `seed_data.py` | `backend/app/` | Solo para agregar nuevos datos de prueba (idempotente) |
 
-### 16.5 Variables de entorno clave
+### 17.5 Variables de entorno clave
 
 | Variable | Valor por defecto | Efecto |
 |---|---|---|
 | `DEBUG` | `false` | `true` expone el endpoint `POST /seed` en Swagger |
 | `SEED_ON_STARTUP` | `false` | `true` ejecuta `seed_data.py` al arrancar la API |
 
-### 16.6 Reglas de migración (lecciones aprendidas)
+### 17.6 Reglas de migración (lecciones aprendidas)
 
 1. **ENUMs nuevos**: crear con `op.execute(sa.text("CREATE TYPE ... AS ENUM ..."))` **antes** de usarlos en columnas.
 2. **Cambio de tipo en columna con DEFAULT**: tres pasos en raw SQL: `DROP DEFAULT` → `ALTER TYPE USING` → `SET DEFAULT`.

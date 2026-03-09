@@ -18,7 +18,20 @@ from alembic import context
 # Adding a new model? Import it here too.
 # ---------------------------------------------------------------------------
 from app.database import Base  # noqa: E402
-from app.models import Customer, Vehicle, WorkOrder, WorkOrderItem  # noqa: F401
+from app.models import (  # noqa: F401
+    Currency,
+    Customer,
+    FuelLevel,
+    Reception,
+    ReceptionDetail,
+    ReceptionStatus,
+    Vehicle,
+    VehicleType,
+    WorkOrder,
+    WorkOrderLine,
+    WorkOrderStatus,
+    WorkType,
+)
 
 # ---------------------------------------------------------------------------
 # Override the sqlalchemy.url from app settings / environment variables.

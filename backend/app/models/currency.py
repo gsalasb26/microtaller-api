@@ -24,6 +24,6 @@ class Currency(Base):
     symbol: Mapped[str] = mapped_column(String(5), nullable=False)
 
     # Relationships
-    work_order_items: Mapped[list["WorkOrderItem"]] = relationship(  # noqa: F821
+    work_orders: Mapped[list["WorkOrder"]] = relationship(  # noqa: F821
         back_populates="currency", lazy="selectin"
     )

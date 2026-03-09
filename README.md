@@ -37,14 +37,16 @@ Documentación interactiva: `http://localhost:8000/docs`.
 
 ---
 
-## Toolbelt de Automatización
+Este proyecto utiliza un "Toolbelt" de PowerShell para estandarizar las tareas comunes. Los scripts se encuentran en la raíz y en la carpeta `/backend`.
 
-| Script | Propósito | Cuándo usarlo | Comando exacto |
-|---|---|---|---|
-| `start.ps1` | Levanta Docker Compose y activa el `venv` del backend | Al iniciar una sesión de trabajo desde cero | `.\start.ps1` |
-| `backend/upgrade_model.ps1` | Genera una migración Alembic a partir de los cambios en modelos y la aplica en un solo paso | Cada vez que se modifica o agrega un modelo ORM | `cd backend ; .\upgrade_model.ps1 -Message "descripcion"` |
-| `sync_git.ps1` | Limpia el índice Git, indexa todos los archivos respetando `.gitignore`, hace commit y push a `main` | Al finalizar un bloque de trabajo y querer sincronizar con GitHub | `.\sync_git.ps1` · `.\sync_git.ps1 -Message "feat: nuevo modelo"` |
+## 🚀 Comandos Rápidos (PowerShell Aliases)
+Si trabajas frecuentemente en este equipo, se recomienda configurar los siguientes aliases en tu `$PROFILE`:
 
+| Comando | Script Destino | Propósito |
+| :--- | :--- | :--- |
+| `tstart` | `start.ps1` | Levanta Docker (DB) e inicia el servidor FastAPI. |
+| `tdb` | `upgrade_model.ps1` | Sincroniza cambios en modelos de Python con la DB. |
+| `tsync` | `sync_git.ps1` | Limpia, indexa, commitea y sube cambios a GitHub. |
 ---
 
 ## Stack Tecnológico

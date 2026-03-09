@@ -6,7 +6,16 @@ from sqlalchemy import text
 
 from app.config import settings
 from app.database import engine
-from app.routers import currencies_router, customers_router, vehicle_types_router, vehicles_router, work_orders_router
+from app.routers import (
+    currencies_router,
+    customers_router,
+    reception_details_router,
+    receptions_router,
+    vehicle_types_router,
+    vehicles_router,
+    work_orders_router,
+    work_types_router,
+)
 
 
 @asynccontextmanager
@@ -55,9 +64,12 @@ app.add_middleware(
 # -- Routers ------------------------------------------------------------------
 app.include_router(currencies_router, prefix="/api/v1")
 app.include_router(customers_router, prefix="/api/v1")
+app.include_router(reception_details_router, prefix="/api/v1")
+app.include_router(receptions_router, prefix="/api/v1")
 app.include_router(vehicle_types_router, prefix="/api/v1")
 app.include_router(vehicles_router, prefix="/api/v1")
 app.include_router(work_orders_router, prefix="/api/v1")
+app.include_router(work_types_router, prefix="/api/v1")
 
 
 # -- Health check -------------------------------------------------------------

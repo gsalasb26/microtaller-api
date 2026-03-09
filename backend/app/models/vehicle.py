@@ -30,6 +30,7 @@ class Vehicle(Base):
     model: Mapped[str] = mapped_column(String(80), nullable=False)
     year: Mapped[int] = mapped_column(Integer, nullable=False)
     plate: Mapped[str] = mapped_column(String(20), unique=True, nullable=False, index=True)
+    vin_number: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -41,6 +42,6 @@ class Vehicle(Base):
     vehicle_type: Mapped["VehicleType"] = relationship(  # noqa: F821
         back_populates="vehicles", lazy="selectin"
     )
-    work_orders: Mapped[list["WorkOrder"]] = relationship(  # noqa: F821
+    receptions: Mapped[list["Reception"]] = relationship(  # noqa: F821
         back_populates="vehicle", lazy="selectin"
     )
